@@ -4,6 +4,7 @@ from io import BytesIO
 
 import dateparser
 import numpy as np
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
@@ -11,15 +12,18 @@ from deutschland.config import Config, module_config
 
 
 class Report:
-    __slots__ = ["date", "name", "content_url", "company", "report", "raw_report"]
+    __slots__ = ["date", "name", "content_url", "company", "report", "raw_report", "aktiva", "passiva", "aktiva_and_passiva"]
 
-    def __init__(self, date, name, content_url, company, report=None, raw_report=None):
+    def __init__(self, date, name, content_url, company, report=None, raw_report=None, aktiva=None, passiva=None, aktiva_and_passiva=None):
         self.date = date
         self.name = name
         self.content_url = content_url
         self.company = company
         self.report = report
         self.raw_report = raw_report
+        self.aktiva = aktiva
+        self.passiva = passiva
+        self.aktiva_and_passiva = aktiva_and_passiva
 
     def to_dict(self):
         return {
@@ -28,6 +32,9 @@ class Report:
             "company": self.company,
             "report": self.report,
             "raw_report": self.raw_report,
+            "aktiva": self.aktiva,
+            "passiva": self.passiva,
+            "aktiva_and_passiva": self.aktiva_and_passiva
         }
 
     def to_hash(self):
@@ -111,11 +118,10 @@ class Bundesanzeiger:
                 continue
 
             company_name = company_name_element.contents[0].strip()
-
             yield Report(date, entry_name, entry_link, company_name)
 
-    def __generate_result(self, content: str):
-        """iterate trough all results and try to fetch single reports"""
+    def __generate_result(self, content: str, only_tables=False):
+        """iterate trough all results and try to fetch single reports or tables"""
         result = {}
         for element in self.__find_all_entries_on_page(content):
             get_element_response = self.session.get(element.content_url)
@@ -134,21 +140,46 @@ class Bundesanzeiger:
                 )
 
             content_soup = BeautifulSoup(get_element_response.text, "html.parser")
-            content_element = content_soup.find(
-                "div", {"class": "publication_container"}
-            )
 
-            if not content_element:
-                continue
+            if only_tables:
+                # Find the <b> element with the text "Aktiva" 
+                aktiva_element = content_soup.find('b', text='Aktiva')
+                if element.name == 'Jahresabschluss zum Geschäftsjahr vom 01.01.2017 bis zum 31.12.2017':
+                    content_element = content_soup.find(
+                        "div", {"class": "publication_container"}
+                    )
 
-            element.report = content_element.text
-            element.raw_report = content_element.prettify()
+                if aktiva_element:
+                    # in this case the aktiva and passiva are merged in a single table
+                    # Find the table that comes after the <b> element
+                    table = aktiva_element.find_next('table')
+
+                    # Check if a table is found
+                    if table:
+                        # Use Pandas to read the HTML table into a DataFrame
+                        df = pd.read_html(str(table), header=0, decimal = ',')[0]
+                        element.aktiva_and_passiva = df
+                    
+                else:
+                    continue
+
+
+
+            else:
+                content_element = content_soup.find(
+                    "div", {"class": "publication_container"}
+                )
+
+                if not content_element:
+                    continue
+
+                element.report = content_element.text
+                element.raw_report = content_element.prettify()
 
             result[element.to_hash()] = element.to_dict()
-
         return result
 
-    def get_reports(self, company_name: str):
+    def get_reports(self, company_name: str, only_tables=False):
         """
         fetch all reports for this company name
         :param company_name:
@@ -183,7 +214,7 @@ class Bundesanzeiger:
         response = self.session.get(
             f"https://www.bundesanzeiger.de/pub/de/start?0-2.-top%7Econtent%7Epanel-left%7Ecard-form=&fulltext={company_name}&area_select=&search_button=Suchen"
         )
-        return self.__generate_result(response.text)
+        return self.__generate_result(response.text, only_tables)
 
 
 if __name__ == "__main__":
