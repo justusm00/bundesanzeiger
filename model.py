@@ -26,4 +26,4 @@ def prediction_to_str(label):
 
 def load_model():
     filepath = Path(__file__).parent / "assets" / "model.onnx"
-    return InferenceSession(str(filepath))
+    return InferenceSession(str(filepath), providers=['AzureExecutionProvider', 'CPUExecutionProvider'])
