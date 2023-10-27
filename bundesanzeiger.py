@@ -12,9 +12,9 @@ from deutschland.config import Config, module_config
 
 
 class Report:
-    __slots__ = ["date", "name", "content_url", "company", "report", "raw_report", "aktiva", "passiva", "aktiva_and_passiva"]
+    __slots__ = ["date", "name", "content_url", "company", "report", "raw_report", "aktiva", "passiva"]
 
-    def __init__(self, date, name, content_url, company, report=None, raw_report=None, aktiva=None, passiva=None, aktiva_and_passiva=None):
+    def __init__(self, date, name, content_url, company, report=None, raw_report=None, aktiva=None, passiva=None):
         self.date = date
         self.name = name
         self.content_url = content_url
@@ -23,7 +23,7 @@ class Report:
         self.raw_report = raw_report
         self.aktiva = aktiva
         self.passiva = passiva
-        self.aktiva_and_passiva = aktiva_and_passiva
+
 
     def to_dict(self):
         return {
@@ -33,8 +33,7 @@ class Report:
             "report": self.report,
             "raw_report": self.raw_report,
             "aktiva": self.aktiva,
-            "passiva": self.passiva,
-            "aktiva_and_passiva": self.aktiva_and_passiva
+            "passiva": self.passiva
         }
 
     def to_hash(self):
@@ -142,24 +141,40 @@ class Bundesanzeiger:
             content_soup = BeautifulSoup(get_element_response.text, "html.parser")
 
             if only_tables:
-                # Find the <b> element with the text "Aktiva" 
-                aktiva_element = content_soup.find('b', text='Aktiva')
-                if element.name == 'Jahresabschluss zum Geschäftsjahr vom 01.01.2017 bis zum 31.12.2017':
-                    content_element = content_soup.find(
-                        "div", {"class": "publication_container"}
-                    )
+                # Find the <b> element with the text "Aktiva" and "Passiva" (case insensitive)
+                aktiva_element = content_soup.find(lambda tag: tag.name == 'b' and tag.text.lower() == 'aktiva')
+                passiva_element = content_soup.find(lambda tag: tag.name == 'b' and tag.text.lower() == 'passiva')
+                
 
                 if aktiva_element:
-                    # in this case the aktiva and passiva are merged in a single table
-                    # Find the table that comes after the <b> element
+                    # Find the aktiva table
                     table = aktiva_element.find_next('table')
 
                     # Check if a table is found
                     if table:
                         # Use Pandas to read the HTML table into a DataFrame
                         df = pd.read_html(str(table), header=0, decimal = ',')[0]
-                        element.aktiva_and_passiva = df
-                    
+                        # split table into aktiva and passiva
+                        passiva_index = df[df[df.columns[0]].str.lower() == 'passiva'].index
+                        if not passiva_index.empty:
+                            passiva_index = passiva_index[0]
+                            #   Split the DataFrame into two DataFrames
+                            df_aktiva = df.iloc[:passiva_index]  # Rows before "Passiva"
+                            df_passiva = df.iloc[passiva_index+2:]  # Rows after Passiva (+2 to avoid repetition of column headers)
+                            # Reset the index for the new DataFrames
+                            df_aktiva.reset_index(drop=True, inplace=True)
+                            df_passiva.reset_index(drop=True, inplace=True)
+                            element.aktiva = df_aktiva
+                            element.passiva = df_passiva
+                        else:
+                            element.aktiva = df
+                            # Find the passiva table
+                            if passiva_element:
+                                table = passiva_element.find_next('table')
+                                if table:
+                                    # Use Pandas to read the HTML table into a DataFrame
+                                    df = pd.read_html(str(table), header=0, decimal = ',')[0]
+                                    element.passiva = df
                 else:
                     continue
 
